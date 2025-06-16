@@ -27,6 +27,34 @@ const Person = struct {
     }
 };
 
+const Hole = struct {
+    age: u32,
+    inner: ?*const Hole,
+
+    fn deinit(self: Hole, allocator: Allocator) void {
+        if (self.inner) |inner| {
+            inner.*.deinit(allocator);
+            allocator.destroy(inner);
+        }
+    }
+
+    fn eql(self: *const Hole, other: *const Hole) bool {
+        if (self.age != other.age) {
+            return false;
+        }
+
+        if (self.inner) |si| {
+            if (other.inner) |oi| {
+                return si.eql(oi);
+            } else {
+                return false;
+            }
+        } else {
+            return other.inner == null;
+        }
+    }
+};
+
 fn test_case(id: u8, input: anytype) !void {
     const num_bytes = serde.calculate_serialized_size(@TypeOf(input), &input);
 
@@ -47,7 +75,7 @@ fn test_case(id: u8, input: anytype) !void {
     try testing.expect(input.eql(&output));
 }
 
-fn run_test(id: u8) !void {
+fn run_test_impl(id: u8) !void {
     switch (id) {
         0 => {
             try test_case(id, Person{
@@ -65,11 +93,36 @@ fn run_test(id: u8) !void {
                 .data = &.{},
             });
         },
+        2 => {
+            try test_case(id, Hole{
+                .age = 69,
+                .inner = null,
+            });
+        },
+        3 => {
+            try test_case(id, Hole{
+                .age = 1131,
+                .inner = &Hole{
+                    .age = 1333,
+                    .inner = null,
+                },
+            });
+        },
         else => unreachable,
     }
 }
 
+fn run_test(id: u8) !void {
+    run_test_impl(id) catch |e| {
+        std.log.warn("Failed for id={d};", .{id});
+        return e;
+    };
+}
+
+const NUM_CASES = 4;
+
 test "roundtrip" {
-    try run_test(0);
-    try run_test(1);
+    for (0..NUM_CASES) |id| {
+        try run_test(@intCast(id));
+    }
 }

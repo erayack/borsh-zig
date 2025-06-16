@@ -30,6 +30,12 @@ struct TestCase0 {
     data: Vec<i32>,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
+struct Hole {
+    age: u32,
+    inner: Option<Box<Hole>>,
+}
+
 fn run_test(id: u8, input: &[u8]) -> Vec<u8> {
     match id {
         0 => run_case(input, TestCase0{
@@ -43,6 +49,17 @@ fn run_test(id: u8, input: &[u8]) -> Vec<u8> {
             age: 699,
             prob: 0.01,
             data: vec![],
+        }),
+        2 => run_case(input, Hole {
+            age: 69,
+            inner: None,
+        }),
+        3 => run_case(input, Hole {
+            age: 1131,
+            inner: Some(Box::new(Hole {
+                age: 1333,
+                inner: None,
+            })),
         }),
         _ => panic!("unknown id: {}", id),
     }

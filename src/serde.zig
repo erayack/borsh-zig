@@ -90,7 +90,7 @@ pub fn calculate_serialized_size(comptime T: type, val: *const T) u64 {
             }
         },
         .optional => |opt_info| {
-            if (val) |*v| {
+            if (val.*) |*v| {
                 return 1 + calculate_serialized_size(opt_info.child, v);
             } else {
                 return 1;
@@ -204,7 +204,7 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
             }
         },
         .optional => |opt_info| {
-            if (val) |*v| {
+            if (val.*) |*v| {
                 out[0] = 1;
                 out = out[1..];
 
@@ -323,7 +323,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
                     return .{ .input = in, .val = out };
                 },
                 .one => {
-                    const out = deserialize_impl(ptr_info.child, input, allocator);
+                    const out = try deserialize_impl(ptr_info.child, input, allocator);
 
                     const ptr = try allocator.create(ptr_info.child);
 
