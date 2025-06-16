@@ -38,6 +38,12 @@ fn run_test(id: u8, input: &[u8]) -> Vec<u8> {
             prob: 0.69,
             data: vec![31, 69],
         }),
+        1 => run_case(input, TestCase0{
+            name: "".to_owned(),
+            age: 699,
+            prob: 0.01,
+            data: vec![],
+        }),
         _ => panic!("unknown id: {}", id),
     }
 }
