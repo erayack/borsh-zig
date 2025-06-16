@@ -1,0 +1,11 @@
+[package]
+name = "roundtrip_tester"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "roundtrip_tester"
+crate-type = ["staticlib"]
+
+[dependencies]
+borsh = { version = "1", features = ["derive"] }

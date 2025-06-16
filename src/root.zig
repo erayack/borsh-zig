@@ -1,6 +1,7 @@
 const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 const Allocator = std.mem.Allocator;
+const roundtrip_test = @import("./roundtrip_test.zig");
 
 /// Swap bytes of integer if target is big endian
 fn maybe_byte_swap(val: anytype) @TypeOf(val) {
@@ -403,6 +404,6 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
     }
 }
 
-test calculate_serialized_size {
-    try std.testing.expectEqual(1, calculate_serialized_size(u8, &5));
+test {
+    _ = roundtrip_test;
 }
