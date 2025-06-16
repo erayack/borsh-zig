@@ -33,7 +33,21 @@ struct TestCase0 {
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug, Clone)]
 struct Hole {
     age: u32,
+    id: [i16; 2],
     inner: Option<Box<Hole>>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
+enum EmptyEnum {
+    One,
+    Two,
+    Three,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
+enum Exists {
+    No,
+    Yes((), bool),
 }
 
 fn run_test(id: u8, input: &[u8]) -> Vec<u8> {
@@ -52,15 +66,21 @@ fn run_test(id: u8, input: &[u8]) -> Vec<u8> {
         }),
         2 => run_case(input, Hole {
             age: 69,
+            id: [3, 9],
             inner: None,
         }),
         3 => run_case(input, Hole {
             age: 1131,
+            id: [3, 10],
             inner: Some(Box::new(Hole {
                 age: 1333,
+                id: [6, 9],
                 inner: None,
             })),
         }),
+        4 => run_case(input, EmptyEnum::Two),
+        5 => run_case(input, Exists::No),
+        6 => run_case(input, Exists::Yes((), true)),
         _ => panic!("unknown id: {}", id),
     }
 }

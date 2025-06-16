@@ -59,6 +59,10 @@ pub fn calculate_serialized_size(comptime T: type, val: *const T) u64 {
             }
         },
         .@"struct" => |struct_info| {
+            if (struct_info.is_tuple) {
+                @compileError("tuple isn't supported");
+            }
+
             var size: u64 = 0;
 
             inline for (struct_info.fields) |field| {
@@ -82,12 +86,16 @@ pub fn calculate_serialized_size(comptime T: type, val: *const T) u64 {
                 @compileError("tag enum is too big to be represented by u8");
             }
 
-            const tag = @intFromEnum(val);
+            const tag = @intFromEnum(val.*);
+
             inline for (union_info.fields, tag_info.fields) |field, tag_field| {
                 if (tag_field.value == tag) {
                     return 1 + calculate_serialized_size(field.type, &@field(val, field.name));
                 }
             }
+
+            // The enum has the correct type and we check every tag value so should return inside the loop above.
+            unreachable;
         },
         .optional => |opt_info| {
             if (val.*) |*v| {
@@ -143,7 +151,7 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
         },
         .void => {},
         .bool => {
-            out[0] = val.*;
+            out[0] = @intFromBool(val.*);
             out = out[1..];
         },
         .array => |array_info| {
@@ -167,6 +175,9 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
             }
         },
         .@"struct" => |struct_info| {
+            if (struct_info.is_tuple) {
+                @compileError("tuple isn't supported");
+            }
             inline for (struct_info.fields) |field| {
                 out = serialize_impl(field.type, &@field(val, field.name), out);
             }
@@ -176,7 +187,7 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
                 @compileError("enum is too big to be represented by u8");
             }
 
-            const tag = @intFromEnum(val);
+            const tag = @intFromEnum(val.*);
 
             inline for (enum_info.fields, 0..) |enum_field, i| {
                 if (enum_field.value == tag) {
@@ -194,11 +205,14 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
                 @compileError("tag enum is too big to be represented by u8");
             }
 
-            const tag = @intFromEnum(val);
-            inline for (tag_info.fields, 0..) |tag_field, i| {
+            const tag = @intFromEnum(val.*);
+            inline for (tag_info.fields, union_info.fields, 0..) |tag_field, union_field, i| {
                 if (tag_field.value == tag) {
                     out[0] = i;
                     out = out[1..];
+
+                    out = serialize_impl(union_field.type, &@field(val, union_field.name), out);
+
                     break;
                 }
             }
@@ -277,7 +291,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
 
             return .{ .input = out.input, .val = @bitCast(out.val) };
         },
-        .void => return .{ .input = input, .val = .{} },
+        .void => return .{ .input = input, .val = void{} },
         .bool => {
             if (input.len == 0) {
                 return DeserializeError.InputTooSmall;
@@ -295,7 +309,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             var val: [array_info.len]array_info.child = undefined;
 
             for (0..val.len) |i| {
-                const out = try deserialize_impl(array_info.child, in);
+                const out = try deserialize_impl(array_info.child, in, allocator);
                 val[i] = out.val;
                 in = out.input;
             }
@@ -335,6 +349,9 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             }
         },
         .@"struct" => |struct_info| {
+            if (struct_info.is_tuple) {
+                @compileError("tuple isn't supported");
+            }
             var out: T = undefined;
 
             var in = input;

@@ -29,6 +29,7 @@ const Person = struct {
 
 const Hole = struct {
     age: u32,
+    id: [2]i16,
     inner: ?*const Hole,
 
     fn deinit(self: Hole, allocator: Allocator) void {
@@ -51,6 +52,43 @@ const Hole = struct {
             }
         } else {
             return other.inner == null;
+        }
+    }
+};
+
+const EmptyEnum = enum {
+    one,
+    two,
+    three,
+
+    fn deinit(_: EmptyEnum, _: Allocator) void {
+        return;
+    }
+
+    fn eql(self: *const EmptyEnum, other: *const EmptyEnum) bool {
+        return self.* == other.*;
+    }
+};
+
+const Exists = union(enum) {
+    no,
+    yes: struct { a: void, b: bool },
+
+    fn deinit(_: Exists, _: Allocator) void {
+        return;
+    }
+
+    fn eql(self: *const Exists, other: *const Exists) bool {
+        switch (self.*) {
+            .no => return other.* == .no,
+            .yes => |si| {
+                switch (other.*) {
+                    .no => return false,
+                    .yes => |oi| {
+                        return si.b == oi.b;
+                    },
+                }
+            },
         }
     }
 };
@@ -96,17 +134,29 @@ fn run_test_impl(id: u8) !void {
         2 => {
             try test_case(id, Hole{
                 .age = 69,
+                .id = .{ 3, 9 },
                 .inner = null,
             });
         },
         3 => {
             try test_case(id, Hole{
                 .age = 1131,
+                .id = .{ 3, 10 },
                 .inner = &Hole{
                     .age = 1333,
+                    .id = .{ 6, 9 },
                     .inner = null,
                 },
             });
+        },
+        4 => {
+            try test_case(id, EmptyEnum.two);
+        },
+        5 => {
+            try test_case(id, Exists{ .no = void{} });
+        },
+        6 => {
+            try test_case(id, Exists{ .yes = .{ .a = void{}, .b = true } });
         },
         else => unreachable,
     }
@@ -119,7 +169,7 @@ fn run_test(id: u8) !void {
     };
 }
 
-const NUM_CASES = 4;
+const NUM_CASES = 7;
 
 test "roundtrip" {
     for (0..NUM_CASES) |id| {
