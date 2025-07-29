@@ -1,6 +1,15 @@
+const native_endian = @import("builtin").target.cpu.arch.endian();
+
+comptime {
+    if (native_endian != .little) {
+        @compileError("borsh-zig only supports little-endian architectures.");
+    }
+}
+
+const tests = @import("./tests.zig");
 pub const serde = @import("./serde.zig");
-const roundtrip_test = @import("./roundtrip_test.zig");
 
 test {
-    _ = roundtrip_test;
+    _ = tests;
+    _ = serde;
 }

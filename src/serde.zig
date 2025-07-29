@@ -2,14 +2,6 @@ const std = @import("std");
 const native_endian = @import("builtin").target.cpu.arch.endian();
 const Allocator = std.mem.Allocator;
 
-/// Swap bytes of integer if target is big endian
-fn maybe_byte_swap(val: anytype) @TypeOf(val) {
-    return switch (native_endian) {
-        .big => @byteSwap(val),
-        .little => val,
-    };
-}
-
 /// Calculate the borsh serialized size of the given value, to be
 ///  used to allocate an output buffer to be passed to `serialize` function
 pub fn calculate_serialized_size(comptime T: type, val: *const T) u64 {
@@ -134,7 +126,7 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
                 @compileError("unsupported integer type");
             }
             const num_bytes = int_info.bits / 8;
-            const bytes = @as([num_bytes]u8, @bitCast(maybe_byte_swap(val.*)));
+            const bytes = @as([num_bytes]u8, @bitCast(val.*));
             inline for (0..bytes.len) |i| {
                 out[i] = bytes[i];
             }
@@ -279,7 +271,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
                 bytes[i] = input[i];
             }
 
-            return .{ .input = input[num_bytes..], .val = maybe_byte_swap(@as(T, @bitCast(bytes))) };
+            return .{ .input = input[num_bytes..], .val = @as(T, @bitCast(bytes)) };
         },
         .float => |float_info| {
             if (float_info.bits != 32 and float_info.bits != 64) {
