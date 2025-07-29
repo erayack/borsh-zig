@@ -5,7 +5,7 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 
 const serde = @import("./serde.zig");
 
-const Person = struct {
+pub const Person = struct {
     name: []const u8,
     age: u128,
     prob: f64,
@@ -19,7 +19,7 @@ const Person = struct {
     }
 };
 
-const Hole = struct {
+pub const Hole = struct {
     age: u32,
     id: [2]i16,
     inner: ?*const Hole,
@@ -41,7 +41,7 @@ const Hole = struct {
     }
 };
 
-const EmptyEnum = enum {
+pub const EmptyEnum = enum {
     one,
     two,
     three,
@@ -51,7 +51,7 @@ const EmptyEnum = enum {
     }
 };
 
-const Exists = union(enum) {
+pub const Exists = union(enum) {
     no,
     yes: struct { a: void, b: bool },
 
