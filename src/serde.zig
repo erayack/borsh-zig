@@ -149,6 +149,8 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
 pub const DeserializeError = error{
     OutOfMemory,
     MaxRecursionDepthReached,
+    /// There are remaining input data after finishing deserialisation
+    RemaniningBytes,
     /// Input is smaller than expected
     InputTooSmall,
     /// Encountered an invalid enum tag
@@ -165,6 +167,11 @@ pub const DeserializeError = error{
 /// So the input buffer can be discarded after the deserialization is done.
 pub fn deserialize(comptime T: type, input: []const u8, allocator: Allocator, max_recursion_depth: u8) DeserializeError!T {
     const out = try deserialize_impl(T, input, allocator, 0, max_recursion_depth);
+
+    if (out.input.len > 0) {
+        return DeserializeError.RemaniningBytes;
+    }
+
     return out.val;
 }
 
