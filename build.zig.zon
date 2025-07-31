@@ -1,6 +1,6 @@
 .{
     .name = .borsh,
-    .version = "0.0.5",
+    .version = "0.0.6",
     .fingerprint = 0x569b4b04d9a452be, // Changing this has security and trust implications.
     .minimum_zig_version = "0.15.0-dev.822+dd75e7bcb",
     .dependencies = .{},

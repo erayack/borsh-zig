@@ -8,7 +8,7 @@ const serde = @import("./serde.zig");
 pub const Person = struct {
     name: []const u8,
     age: u128,
-    prob: f64,
+    prob: f16,
     data: []const i32,
 
     fn eql(self: *const Person, other: *const Person) bool {

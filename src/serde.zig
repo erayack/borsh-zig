@@ -31,7 +31,7 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
             return num_bytes;
         },
         .float => |float_info| {
-            if (float_info.bits != 32 and float_info.bits != 64) {
+            if (float_info.bits != 16 and float_info.bits != 32 and float_info.bits != 64) {
                 @compileError("unsupported float type");
             }
             const num_bytes = float_info.bits / 8;
@@ -197,7 +197,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
             return .{ .input = input[num_bytes..], .val = @as(T, @bitCast(bytes)) };
         },
         .float => |float_info| {
-            if (float_info.bits != 32 and float_info.bits != 64) {
+            if (float_info.bits != 16 and float_info.bits != 32 and float_info.bits != 64) {
                 @compileError("unsupported float type");
             }
             const num_bytes = float_info.bits / 8;
