@@ -1,5 +1,5 @@
 const std = @import("std");
-const ArenaAllocator = std.heap.ArenaAllocator;
+const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 
 const serde = @import("./serde.zig");
 const tests = @import("./tests.zig");
@@ -25,20 +25,21 @@ fn to_fuzz(_: void, input: []const u8) anyerror!void {
         }
     }
 
-    inline for (DATA_TYPES) |dt| {
-        var arena = ArenaAllocator.init(gpa);
-        defer arena.deinit();
-        const alloc = arena.allocator();
+    const deserialize_buf = try gpa.alloc(u8, 1 << 14);
+    defer gpa.free(deserialize_buf);
 
-        _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory else return;
-        };
-        _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory else return;
-        };
-        _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch |e| {
-            if (e == error.OutOfMemory) return error.OutOfMemory else return;
-        };
+    var fb_alloc = FixedBufferAllocator.init(deserialize_buf);
+    const alloc = fb_alloc.allocator();
+
+    inline for (DATA_TYPES) |dt| {
+        _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch {};
+        fb_alloc.reset();
+
+        _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch {};
+        fb_alloc.reset();
+
+        _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch {};
+        fb_alloc.reset();
     }
 }
 
