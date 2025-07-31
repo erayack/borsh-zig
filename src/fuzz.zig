@@ -30,9 +30,15 @@ fn to_fuzz(_: void, input: []const u8) anyerror!void {
         defer arena.deinit();
         const alloc = arena.allocator();
 
-        _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch {};
-        _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch {};
-        _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory else return;
+        };
+        _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory else return;
+        };
+        _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch |e| {
+            if (e == error.OutOfMemory) return error.OutOfMemory else return;
+        };
     }
 }
 
