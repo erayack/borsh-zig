@@ -71,19 +71,19 @@ pub const Exists = union(enum) {
 };
 
 fn test_case(input: anytype) !void {
+    const max_recursion_depth = 20;
+
     const T = @TypeOf(input);
 
-    const num_bytes = serde.calculate_serialized_size(T, &input);
-
-    const input_bytes = try testing.allocator.alloc(u8, @intCast(num_bytes));
+    const input_bytes = try testing.allocator.alloc(u8, 1 << 12);
     defer testing.allocator.free(input_bytes);
 
-    try serde.serialize(T, &input, input_bytes);
+    const serialized_size = try serde.serialize(T, &input, input_bytes, max_recursion_depth);
 
     var arena = ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const output = try serde.deserialize(T, input_bytes, alloc);
+    const output = try serde.deserialize(T, input_bytes[0..serialized_size], alloc, max_recursion_depth);
 
     try testing.expect(input.eql(&output));
 }

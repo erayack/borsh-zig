@@ -1,124 +1,18 @@
 const std = @import("std");
-const native_endian = @import("builtin").target.cpu.arch.endian();
 const Allocator = std.mem.Allocator;
 
-/// Calculate the borsh serialized size of the given value, to be
-///  used to allocate an output buffer to be passed to `serialize` function
-pub fn calculate_serialized_size(comptime T: type, val: *const T) u64 {
-    switch (T) {
-        u8 => return 1,
-        u16 => return 2,
-        u32 => return 4,
-        u64 => return 8,
-        u128 => return 16,
-        i8 => return 1,
-        i16 => return 2,
-        i32 => return 4,
-        i64 => return 8,
-        i128 => return 16,
-        f32 => return 4,
-        f64 => return 8,
-        void => return 0,
-        bool => return 1,
-        else => {},
-    }
-
-    switch (@typeInfo(T)) {
-        .array => |array_info| {
-            var size: u64 = 0;
-
-            for (val) |*elem| {
-                size += calculate_serialized_size(array_info.child, elem);
-            }
-
-            return size;
-        },
-        .pointer => |ptr_info| {
-            switch (ptr_info.size) {
-                .slice => {
-                    var size: u64 = 4;
-
-                    for (val.*) |*elem| {
-                        size += calculate_serialized_size(ptr_info.child, elem);
-                    }
-
-                    return size;
-                },
-                .one => {
-                    return calculate_serialized_size(ptr_info.child, val.*);
-                },
-                else => @compileError("unsupported type"),
-            }
-        },
-        .@"struct" => |struct_info| {
-            if (struct_info.is_tuple) {
-                @compileError("tuple isn't supported");
-            }
-
-            var size: u64 = 0;
-
-            inline for (struct_info.fields) |field| {
-                size += calculate_serialized_size(field.type, &@field(val, field.name));
-            }
-
-            return size;
-        },
-        .@"enum" => |enum_info| {
-            if (enum_info.fields.len >= 256) {
-                @compileError("enum is too big to be represented by u8");
-            }
-
-            return 1;
-        },
-        .@"union" => |union_info| {
-            const tag_t = union_info.tag_type orelse @compileError("non tagged unions are not supported");
-            const tag_info = @typeInfo(tag_t).@"enum";
-
-            if (tag_info.fields.len >= 256) {
-                @compileError("tag enum is too big to be represented by u8");
-            }
-
-            const tag = @intFromEnum(val.*);
-
-            inline for (union_info.fields, tag_info.fields) |field, tag_field| {
-                if (tag_field.value == tag) {
-                    return 1 + calculate_serialized_size(field.type, &@field(val, field.name));
-                }
-            }
-
-            // The enum has the correct type and we check every tag value so should return inside the loop above.
-            unreachable;
-        },
-        .optional => |opt_info| {
-            if (val.*) |*v| {
-                return 1 + calculate_serialized_size(opt_info.child, v);
-            } else {
-                return 1;
-            }
-        },
-        else => @compileError("unsupported type"),
-    }
-}
-
 pub const SerializeError = error{
-    /// There is remaining capacity in the output buffer after finishing serialization
-    BufferTooBig,
+    /// Buffer isn't big enough to hold the output
+    BufferTooSmall,
+    MaxRecursionDepthReached,
 };
 
-// Serialize given object to borsh format. Returns error if the given output buffer is larger than needed.
-//
-// Invokes safety checked illegal behavior (out of bounds array access) when output buffer is not large enough to
-//  fit the given object in borsh format.
-pub fn serialize(comptime T: type, val: *const T, buffer: []u8) SerializeError!void {
-    const out = serialize_impl(T, val, buffer);
-
-    if (out.len > 0) {
-        return SerializeError.BufferTooBig;
-    }
+pub fn serialize(comptime T: type, val: *const T, buffer: []u8, max_recursion_depth: u8) SerializeError!usize {
+    return try serialize_impl(T, val, buffer, 0, max_recursion_depth);
 }
 
-fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
-    var out = output;
+fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_depth: u8) SerializeError!usize {
+    if (depth >= max_depth) return SerializeError.MaxRecursionDepthReached;
 
     switch (@typeInfo(T)) {
         .int => |int_info| {
@@ -126,42 +20,59 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
                 @compileError("unsupported integer type");
             }
             const num_bytes = int_info.bits / 8;
+            if (output.len < num_bytes) {
+                return SerializeError.BufferTooSmall;
+            }
+
             const bytes = @as([num_bytes]u8, @bitCast(val.*));
             inline for (0..bytes.len) |i| {
-                out[i] = bytes[i];
+                output[i] = bytes[i];
             }
-            out = out[num_bytes..];
+            return num_bytes;
         },
         .float => |float_info| {
             if (float_info.bits != 32 and float_info.bits != 64) {
                 @compileError("unsupported float type");
             }
-            const int_t = std.meta.Int(.unsigned, float_info.bits);
-            const int_ptr: *const int_t = @ptrCast(val);
+            const num_bytes = float_info.bits / 8;
+            if (output.len < num_bytes) {
+                return SerializeError.BufferTooSmall;
+            }
 
-            out = serialize_impl(int_t, int_ptr, out);
+            const bytes = @as([num_bytes]u8, @bitCast(val.*));
+            inline for (0..bytes.len) |i| {
+                output[i] = bytes[i];
+            }
+            return num_bytes;
         },
-        .void => {},
+        .void => return 0,
         .bool => {
-            out[0] = @intFromBool(val.*);
-            out = out[1..];
+            if (output.len < 1) {
+                return SerializeError.BufferTooSmall;
+            }
+            output[0] = @intFromBool(val.*);
+            return 1;
         },
         .array => |array_info| {
+            var n_written: usize = 0;
             for (val) |*elem| {
-                out = serialize_impl(array_info.child, elem, out);
+                n_written += try serialize_impl(array_info.child, elem, output[n_written..], depth + 1, max_depth);
             }
+            return n_written;
         },
         .pointer => |ptr_info| {
             switch (ptr_info.size) {
                 .slice => {
-                    out = serialize_impl(u32, &@intCast(val.len), out);
+                    var n_written: usize = try serialize_impl(u32, &@intCast(val.len), output, depth + 1, max_depth);
 
                     for (val.*) |*elem| {
-                        out = serialize_impl(ptr_info.child, elem, out);
+                        n_written += try serialize_impl(ptr_info.child, elem, output[n_written..], depth + 1, max_depth);
                     }
+
+                    return n_written;
                 },
                 .one => {
-                    out = serialize_impl(ptr_info.child, val.*, out);
+                    return try serialize_impl(ptr_info.child, val.*, output, depth + 1, max_depth);
                 },
                 else => @compileError("unsupported type"),
             }
@@ -170,9 +81,11 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
             if (struct_info.is_tuple) {
                 @compileError("tuple isn't supported");
             }
+            var n_written: usize = 0;
             inline for (struct_info.fields) |field| {
-                out = serialize_impl(field.type, &@field(val, field.name), out);
+                n_written += try serialize_impl(field.type, &@field(val, field.name), output[n_written..], depth + 1, max_depth);
             }
+            return n_written;
         },
         .@"enum" => |enum_info| {
             if (enum_info.fields.len >= 256) {
@@ -181,13 +94,18 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
 
             const tag = @intFromEnum(val.*);
 
+            if (output.len < 1) {
+                return SerializeError.BufferTooSmall;
+            }
+
             inline for (enum_info.fields, 0..) |enum_field, i| {
                 if (enum_field.value == tag) {
-                    out[0] = i;
-                    out = out[1..];
-                    break;
+                    output[0] = i;
+                    return 1;
                 }
             }
+
+            unreachable;
         },
         .@"union" => |union_info| {
             const tag_t = union_info.tag_type orelse @compileError("non tagged unions are not supported");
@@ -197,41 +115,42 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8) []u8 {
                 @compileError("tag enum is too big to be represented by u8");
             }
 
+            if (output.len < 1) {
+                return SerializeError.BufferTooSmall;
+            }
+
             const tag = @intFromEnum(val.*);
             inline for (tag_info.fields, union_info.fields, 0..) |tag_field, union_field, i| {
                 if (tag_field.value == tag) {
-                    out[0] = i;
-                    out = out[1..];
-
-                    out = serialize_impl(union_field.type, &@field(val, union_field.name), out);
-
-                    break;
+                    output[0] = i;
+                    return 1 + try serialize_impl(union_field.type, &@field(val, union_field.name), output[1..], depth + 1, max_depth);
                 }
             }
+
+            unreachable;
         },
         .optional => |opt_info| {
-            if (val.*) |*v| {
-                out[0] = 1;
-                out = out[1..];
+            if (output.len < 1) {
+                return SerializeError.BufferTooSmall;
+            }
 
-                out = serialize_impl(opt_info.child, v, out);
+            if (val.*) |*v| {
+                output[0] = 1;
+                return 1 + try serialize_impl(opt_info.child, v, output[1..], depth + 1, max_depth);
             } else {
-                out[0] = 0;
-                out = out[1..];
+                output[0] = 0;
+                return 1;
             }
         },
         else => @compileError("unsupported type"),
     }
-
-    return out;
 }
 
 pub const DeserializeError = error{
     OutOfMemory,
+    MaxRecursionDepthReached,
     /// Input is smaller than expected
     InputTooSmall,
-    /// There were remanining bytes after deserializing the object from given input
-    InputTooBig,
     /// Encountered an invalid enum tag
     InvalidEnumTag,
     /// Encountered an invalid boolean value. Booleans have to be 1 or 0.
@@ -244,17 +163,14 @@ pub const DeserializeError = error{
 ///
 /// Pointers and slices are allocated using the given allocator, the output object doesn't borrow the input buffer in any way.
 /// So the input buffer can be discarded after the deserialization is done.
-pub fn deserialize(comptime T: type, input: []const u8, allocator: Allocator) DeserializeError!T {
-    const out = try deserialize_impl(T, input, allocator);
-
-    if (out.input.len > 0) {
-        return DeserializeError.InputTooBig;
-    }
-
+pub fn deserialize(comptime T: type, input: []const u8, allocator: Allocator, max_recursion_depth: u8) DeserializeError!T {
+    const out = try deserialize_impl(T, input, allocator, 0, max_recursion_depth);
     return out.val;
 }
 
-fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) DeserializeError!struct { input: []const u8, val: T } {
+fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, depth: u8, max_depth: u8) DeserializeError!struct { input: []const u8, val: T } {
+    if (depth >= max_depth) return DeserializeError.MaxRecursionDepthReached;
+
     switch (@typeInfo(T)) {
         .int => |int_info| {
             if (int_info.bits % 8 != 0) {
@@ -277,11 +193,18 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             if (float_info.bits != 32 and float_info.bits != 64) {
                 @compileError("unsupported float type");
             }
-            const int_t = std.meta.Int(.unsigned, float_info.bits);
+            const num_bytes = float_info.bits / 8;
 
-            const out = try deserialize_impl(comptime int_t, input, allocator);
+            if (input.len < num_bytes) {
+                return DeserializeError.InputTooSmall;
+            }
 
-            return .{ .input = out.input, .val = @bitCast(out.val) };
+            var bytes: [num_bytes]u8 = undefined;
+            inline for (0..num_bytes) |i| {
+                bytes[i] = input[i];
+            }
+
+            return .{ .input = input[num_bytes..], .val = @as(T, @bitCast(bytes)) };
         },
         .void => return .{ .input = input, .val = void{} },
         .bool => {
@@ -301,7 +224,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             var val: [array_info.len]array_info.child = undefined;
 
             for (0..val.len) |i| {
-                const out = try deserialize_impl(array_info.child, in, allocator);
+                const out = try deserialize_impl(array_info.child, in, allocator, depth + 1, max_depth);
                 val[i] = out.val;
                 in = out.input;
             }
@@ -313,7 +236,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
                 .slice => {
                     var in = input;
 
-                    const len_out = try deserialize_impl(u32, in, allocator);
+                    const len_out = try deserialize_impl(u32, in, allocator, depth + 1, max_depth);
                     in = len_out.input;
                     const length = len_out.val;
 
@@ -321,7 +244,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
                     errdefer allocator.free(out);
 
                     for (0..length) |i| {
-                        const elem_out = try deserialize_impl(ptr_info.child, in, allocator);
+                        const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
                         in = elem_out.input;
                         out[i] = elem_out.val;
                     }
@@ -329,7 +252,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
                     return .{ .input = in, .val = out };
                 },
                 .one => {
-                    const out = try deserialize_impl(ptr_info.child, input, allocator);
+                    const out = try deserialize_impl(ptr_info.child, input, allocator, depth + 1, max_depth);
 
                     const ptr = try allocator.create(ptr_info.child);
 
@@ -349,7 +272,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             var in = input;
 
             inline for (struct_info.fields) |field| {
-                const o = try deserialize_impl(field.type, in, allocator);
+                const o = try deserialize_impl(field.type, in, allocator, depth + 1, max_depth);
                 in = o.input;
                 @field(out, field.name) = o.val;
             }
@@ -391,7 +314,7 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
 
             inline for (union_info.fields, 0..) |union_field, i| {
                 if (index == i) {
-                    const out = try deserialize_impl(union_field.type, input[1..], allocator);
+                    const out = try deserialize_impl(union_field.type, input[1..], allocator, depth + 1, max_depth);
                     return .{ .input = out.input, .val = @unionInit(T, union_field.name, out.val) };
                 }
             }
@@ -399,10 +322,10 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator) D
             return DeserializeError.InvalidEnumTag;
         },
         .optional => |opt_info| {
-            const is_valid_out = try deserialize_impl(bool, input, allocator);
+            const is_valid_out = try deserialize_impl(bool, input, allocator, depth + 1, max_depth);
 
             if (is_valid_out.val) {
-                const out = try deserialize_impl(opt_info.child, is_valid_out.input, allocator);
+                const out = try deserialize_impl(opt_info.child, is_valid_out.input, allocator, depth + 1, max_depth);
                 return .{ .input = out.input, .val = out.val };
             } else {
                 return .{ .input = is_valid_out.input, .val = null };

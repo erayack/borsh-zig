@@ -11,6 +11,8 @@ const DATA_TYPES = [_]type{
     tests.Hole,
 };
 
+const max_recursion_depth = 20;
+
 fn to_fuzz(_: void, input: []const u8) anyerror!void {
     var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
@@ -28,9 +30,9 @@ fn to_fuzz(_: void, input: []const u8) anyerror!void {
         defer arena.deinit();
         const alloc = arena.allocator();
 
-        _ = serde.deserialize(dt, input, alloc) catch {};
-        _ = serde.deserialize([]dt, input, alloc) catch {};
-        _ = serde.deserialize(*dt, input, alloc) catch {};
+        _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch {};
     }
 }
 
