@@ -6,7 +6,7 @@ const ArenaAllocator = std.heap.ArenaAllocator;
 const serde = @import("./serde.zig");
 
 pub const Person = struct {
-    name: []const u8,
+    name: [:0]const u8,
     age: u128,
     prob: f16,
     data: []const i32,
@@ -23,10 +23,21 @@ pub const Hole = struct {
     age: u32,
     id: [2]i16,
     inner: ?*const Hole,
+    other_holes: []const Hole,
 
     fn eql(self: *const Hole, other: *const Hole) bool {
         if (self.age != other.age) {
             return false;
+        }
+
+        if (self.other_holes.len != other.other_holes.len) {
+            return false;
+        }
+
+        for (self.other_holes, other.other_holes) |*soh, *ooh| {
+            if (!soh.eql(ooh)) {
+                return false;
+            }
         }
 
         if (self.inner) |si| {
@@ -108,14 +119,28 @@ test "serde" {
         .age = 69,
         .id = .{ 3, 9 },
         .inner = null,
+        .other_holes = &.{},
+    });
+    try test_case(Hole{
+        .age = 69,
+        .id = .{ 3, 9 },
+        .inner = null,
+        .other_holes = &.{Hole{
+            .age = 699,
+            .id = .{ 12, 23 },
+            .inner = null,
+            .other_holes = &.{},
+        }},
     });
     try test_case(Hole{
         .age = 1131,
         .id = .{ 3, 10 },
+        .other_holes = &.{},
         .inner = &Hole{
             .age = 1333,
             .id = .{ 6, 9 },
             .inner = null,
+            .other_holes = &.{},
         },
     });
     try test_case(EmptyEnum.two);

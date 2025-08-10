@@ -69,6 +69,10 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
                         n_written += try serialize_impl(ptr_info.child, elem, output[n_written..], depth + 1, max_depth);
                     }
 
+                    if (ptr_info.sentinel()) |sentinel| {
+                        n_written += try serialize_impl(ptr_info.child, &sentinel, output[n_written..], depth + 1, max_depth);
+                    }
+
                     return n_written;
                 },
                 .one => {
@@ -157,6 +161,10 @@ pub const DeserializeError = error{
     InvalidEnumTag,
     /// Encountered an invalid boolean value. Booleans have to be 1 or 0.
     InvalidBoolean,
+    /// Found the sentinel in slice elements
+    SentinelInSlice,
+    /// The sentinel in input doesn't match the sentinel in type
+    WrongSentinel,
 };
 
 /// Deserialize the given type of object from given input buffer.
@@ -247,16 +255,40 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
                     in = len_out.input;
                     const length = len_out.val;
 
-                    const out = try allocator.alloc(ptr_info.child, length);
-                    errdefer allocator.free(out);
+                    if (ptr_info.sentinel()) |sentinel| {
+                        const out = try allocator.allocSentinel(ptr_info.child, length, sentinel);
+                        errdefer allocator.free(out);
 
-                    for (0..length) |i| {
-                        const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
-                        in = elem_out.input;
-                        out[i] = elem_out.val;
+                        for (0..length) |i| {
+                            const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
+                            in = elem_out.input;
+
+                            if (elem_out.val == sentinel) {
+                                return DeserializeError.SentinelInSlice;
+                            }
+
+                            out[i] = elem_out.val;
+                        }
+
+                        const sentinel_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
+                        in = sentinel_out.input;
+                        if (sentinel_out.val != sentinel) {
+                            return DeserializeError.WrongSentinel;
+                        }
+
+                        return .{ .input = in, .val = out };
+                    } else {
+                        const out = try allocator.alloc(ptr_info.child, length);
+                        errdefer allocator.free(out);
+
+                        for (0..length) |i| {
+                            const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
+                            in = elem_out.input;
+                            out[i] = elem_out.val;
+                        }
+
+                        return .{ .input = in, .val = out };
                     }
-
-                    return .{ .input = in, .val = out };
                 },
                 .one => {
                     const out = try deserialize_impl(ptr_info.child, input, allocator, depth + 1, max_depth);
