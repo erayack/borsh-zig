@@ -69,10 +69,6 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
                         n_written += try serialize_impl(ptr_info.child, elem, output[n_written..], depth + 1, max_depth);
                     }
 
-                    if (ptr_info.sentinel()) |sentinel| {
-                        n_written += try serialize_impl(ptr_info.child, &sentinel, output[n_written..], depth + 1, max_depth);
-                    }
-
                     return n_written;
                 },
                 .one => {
@@ -163,8 +159,6 @@ pub const DeserializeError = error{
     InvalidBoolean,
     /// Found the sentinel in slice elements
     SentinelInSlice,
-    /// The sentinel in input doesn't match the sentinel in type
-    WrongSentinel,
 };
 
 /// Deserialize the given type of object from given input buffer.
@@ -268,12 +262,6 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
                             }
 
                             out[i] = elem_out.val;
-                        }
-
-                        const sentinel_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
-                        in = sentinel_out.input;
-                        if (sentinel_out.val != sentinel) {
-                            return DeserializeError.WrongSentinel;
                         }
 
                         return .{ .input = in, .val = out };
