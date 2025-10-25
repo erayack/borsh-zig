@@ -56,23 +56,47 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
         .array => |array_info| {
             var n_written: usize = 0;
             for (val) |*elem| {
-                n_written += try serialize_impl(array_info.child, elem, output[n_written..], depth + 1, max_depth);
+                n_written += try serialize_impl(
+                    array_info.child,
+                    elem,
+                    output[n_written..],
+                    depth + 1,
+                    max_depth,
+                );
             }
             return n_written;
         },
         .pointer => |ptr_info| {
             switch (ptr_info.size) {
                 .slice => {
-                    var n_written: usize = try serialize_impl(u32, &@intCast(val.len), output, depth + 1, max_depth);
+                    var n_written: usize = try serialize_impl(
+                        u32,
+                        &@intCast(val.len),
+                        output,
+                        depth + 1,
+                        max_depth,
+                    );
 
                     for (val.*) |*elem| {
-                        n_written += try serialize_impl(ptr_info.child, elem, output[n_written..], depth + 1, max_depth);
+                        n_written += try serialize_impl(
+                            ptr_info.child,
+                            elem,
+                            output[n_written..],
+                            depth + 1,
+                            max_depth,
+                        );
                     }
 
                     return n_written;
                 },
                 .one => {
-                    return try serialize_impl(ptr_info.child, val.*, output, depth + 1, max_depth);
+                    return try serialize_impl(
+                        ptr_info.child,
+                        val.*,
+                        output,
+                        depth + 1,
+                        max_depth,
+                    );
                 },
                 else => @compileError("unsupported type"),
             }
@@ -83,7 +107,13 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
             }
             var n_written: usize = 0;
             inline for (struct_info.fields) |field| {
-                n_written += try serialize_impl(field.type, &@field(val, field.name), output[n_written..], depth + 1, max_depth);
+                n_written += try serialize_impl(
+                    field.type,
+                    &@field(val, field.name),
+                    output[n_written..],
+                    depth + 1,
+                    max_depth,
+                );
             }
             return n_written;
         },
@@ -123,7 +153,13 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
             inline for (tag_info.fields, union_info.fields, 0..) |tag_field, union_field, i| {
                 if (tag_field.value == tag) {
                     output[0] = i;
-                    return 1 + try serialize_impl(union_field.type, &@field(val, union_field.name), output[1..], depth + 1, max_depth);
+                    return 1 + try serialize_impl(
+                        union_field.type,
+                        &@field(val, union_field.name),
+                        output[1..],
+                        depth + 1,
+                        max_depth,
+                    );
                 }
             }
 
@@ -165,9 +201,15 @@ pub const DeserializeError = error{
 ///
 /// Errors if input is too small or too big.
 ///
-/// Pointers and slices are allocated using the given allocator, the output object doesn't borrow the input buffer in any way.
+/// Pointers and slices are allocated using the given allocator,
+///     the output object doesn't borrow the input buffer in any way.
 /// So the input buffer can be discarded after the deserialization is done.
-pub fn deserialize(comptime T: type, input: []const u8, allocator: Allocator, max_recursion_depth: u8) DeserializeError!T {
+pub fn deserialize(
+    comptime T: type,
+    input: []const u8,
+    allocator: Allocator,
+    max_recursion_depth: u8,
+) DeserializeError!T {
     const out = try deserialize_impl(T, input, allocator, 0, max_recursion_depth);
 
     if (out.input.len > 0) {
@@ -177,7 +219,27 @@ pub fn deserialize(comptime T: type, input: []const u8, allocator: Allocator, ma
     return out.val;
 }
 
-fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, depth: u8, max_depth: u8) DeserializeError!struct { input: []const u8, val: T } {
+/// Same as `deserialize` but doesn't error if there are remaining input bytes after finishing the deserialization.
+///
+/// It will return of offset that it used up to when deserializing so caller can continue deserializing other data.
+/// using `input[out.offset..]`
+pub fn deserialize_stream(
+    comptime T: type,
+    input: []const u8,
+    allocator: Allocator,
+    max_recursion_depth: u8,
+) DeserializeError!struct { val: T, offset: usize } {
+    const out = try deserialize_impl(T, input, allocator, 0, max_recursion_depth);
+    return .{ .val = out.val, .offset = input.len - out.input.len };
+}
+
+fn deserialize_impl(
+    comptime T: type,
+    input: []const u8,
+    allocator: Allocator,
+    depth: u8,
+    max_depth: u8,
+) DeserializeError!struct { input: []const u8, val: T } {
     if (depth >= max_depth) return DeserializeError.MaxRecursionDepthReached;
 
     switch (@typeInfo(T)) {
@@ -233,7 +295,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
             var val: [array_info.len]array_info.child = undefined;
 
             for (0..val.len) |i| {
-                const out = try deserialize_impl(array_info.child, in, allocator, depth + 1, max_depth);
+                const out = try deserialize_impl(
+                    array_info.child,
+                    in,
+                    allocator,
+                    depth + 1,
+                    max_depth,
+                );
                 val[i] = out.val;
                 in = out.input;
             }
@@ -245,16 +313,32 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
                 .slice => {
                     var in = input;
 
-                    const len_out = try deserialize_impl(u32, in, allocator, depth + 1, max_depth);
+                    const len_out = try deserialize_impl(
+                        u32,
+                        in,
+                        allocator,
+                        depth + 1,
+                        max_depth,
+                    );
                     in = len_out.input;
                     const length = len_out.val;
 
                     if (ptr_info.sentinel()) |sentinel| {
-                        const out = try allocator.allocSentinel(ptr_info.child, length, sentinel);
+                        const out = try allocator.allocSentinel(
+                            ptr_info.child,
+                            length,
+                            sentinel,
+                        );
                         errdefer allocator.free(out);
 
                         for (0..length) |i| {
-                            const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
+                            const elem_out = try deserialize_impl(
+                                ptr_info.child,
+                                in,
+                                allocator,
+                                depth + 1,
+                                max_depth,
+                            );
                             in = elem_out.input;
 
                             if (elem_out.val == sentinel) {
@@ -270,7 +354,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
                         errdefer allocator.free(out);
 
                         for (0..length) |i| {
-                            const elem_out = try deserialize_impl(ptr_info.child, in, allocator, depth + 1, max_depth);
+                            const elem_out = try deserialize_impl(
+                                ptr_info.child,
+                                in,
+                                allocator,
+                                depth + 1,
+                                max_depth,
+                            );
                             in = elem_out.input;
                             out[i] = elem_out.val;
                         }
@@ -279,7 +369,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
                     }
                 },
                 .one => {
-                    const out = try deserialize_impl(ptr_info.child, input, allocator, depth + 1, max_depth);
+                    const out = try deserialize_impl(
+                        ptr_info.child,
+                        input,
+                        allocator,
+                        depth + 1,
+                        max_depth,
+                    );
 
                     const ptr = try allocator.create(ptr_info.child);
 
@@ -299,7 +395,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
             var in = input;
 
             inline for (struct_info.fields) |field| {
-                const o = try deserialize_impl(field.type, in, allocator, depth + 1, max_depth);
+                const o = try deserialize_impl(
+                    field.type,
+                    in,
+                    allocator,
+                    depth + 1,
+                    max_depth,
+                );
                 in = o.input;
                 @field(out, field.name) = o.val;
             }
@@ -341,7 +443,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
 
             inline for (union_info.fields, 0..) |union_field, i| {
                 if (index == i) {
-                    const out = try deserialize_impl(union_field.type, input[1..], allocator, depth + 1, max_depth);
+                    const out = try deserialize_impl(
+                        union_field.type,
+                        input[1..],
+                        allocator,
+                        depth + 1,
+                        max_depth,
+                    );
                     return .{ .input = out.input, .val = @unionInit(T, union_field.name, out.val) };
                 }
             }
@@ -352,7 +460,13 @@ fn deserialize_impl(comptime T: type, input: []const u8, allocator: Allocator, d
             const is_valid_out = try deserialize_impl(bool, input, allocator, depth + 1, max_depth);
 
             if (is_valid_out.val) {
-                const out = try deserialize_impl(opt_info.child, is_valid_out.input, allocator, depth + 1, max_depth);
+                const out = try deserialize_impl(
+                    opt_info.child,
+                    is_valid_out.input,
+                    allocator,
+                    depth + 1,
+                    max_depth,
+                );
                 return .{ .input = out.input, .val = out.val };
             } else {
                 return .{ .input = is_valid_out.input, .val = null };

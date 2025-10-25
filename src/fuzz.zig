@@ -24,6 +24,9 @@ fn fuzz_de(input: []const u8, gpa: Allocator) anyerror!void {
         _ = serde.deserialize(dt, input, alloc, max_recursion_depth) catch {};
         _ = serde.deserialize([]dt, input, alloc, max_recursion_depth) catch {};
         _ = serde.deserialize(*dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize_stream(dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize_stream([]dt, input, alloc, max_recursion_depth) catch {};
+        _ = serde.deserialize_stream(*dt, input, alloc, max_recursion_depth) catch {};
     }
 }
 
