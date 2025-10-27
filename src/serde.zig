@@ -1,6 +1,21 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
+/// Returns true when `T` is safe to treat as raw bytes at compile time.
+///
+/// Integers, floats and zero-sized or `void` types have a stable,
+/// byte-addressable layout in Zig, so copying them byte-for-byte is well-defined.
+pub fn isRawCopySafe(comptime T: type) bool {
+    if (@sizeOf(T) == 0) return true;
+
+    return switch (@typeInfo(T)) {
+        .int, .float => true,
+        .bool => true,
+        .void => true,
+        else => false,
+    };
+}
+
 pub const SerializeError = error{
     /// Buffer isn't big enough to hold the output
     BufferTooSmall,
@@ -54,6 +69,14 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
             return 1;
         },
         .array => |array_info| {
+            const total_bytes: usize = std.math.mul(usize, array_info.len, @sizeOf(array_info.child)) catch return SerializeError.BufferTooSmall;
+
+            if (isRawCopySafe(array_info.child) and total_bytes <= output.len) {
+                const source_bytes = std.mem.asBytes(val);
+                std.mem.copyForwards(u8, output[0..total_bytes], source_bytes);
+                return total_bytes;
+            }
+
             var n_written: usize = 0;
             for (val) |*elem| {
                 n_written += try serialize_impl(
@@ -69,13 +92,24 @@ fn serialize_impl(comptime T: type, val: *const T, output: []u8, depth: u8, max_
         .pointer => |ptr_info| {
             switch (ptr_info.size) {
                 .slice => {
+                    var len_u32: u32 = @as(u32, @intCast(val.len));
                     var n_written: usize = try serialize_impl(
                         u32,
-                        &@intCast(val.len),
+                        &len_u32,
                         output,
                         depth + 1,
                         max_depth,
                     );
+
+                    if (ptr_info.sentinel() == null and isRawCopySafe(ptr_info.child)) {
+                        const elem_bytes = std.mem.sliceAsBytes(val.*);
+                        if (output.len < n_written + elem_bytes.len) {
+                            return SerializeError.BufferTooSmall;
+                        }
+                        const dest = output[n_written .. n_written + elem_bytes.len];
+                        std.mem.copyForwards(u8, dest, elem_bytes);
+                        return n_written + elem_bytes.len;
+                    }
 
                     for (val.*) |*elem| {
                         n_written += try serialize_impl(
@@ -197,6 +231,14 @@ pub const DeserializeError = error{
     SentinelInSlice,
 };
 
+inline fn validateBoolBytes(bytes: []const u8) DeserializeError!void {
+    for (bytes) |byte| {
+        if (byte > 1) {
+            return DeserializeError.InvalidBoolean;
+        }
+    }
+}
+
 /// Deserialize the given type of object from given input buffer.
 ///
 /// Errors if input is too small or too big.
@@ -294,6 +336,25 @@ fn deserialize_impl(
 
             var val: [array_info.len]array_info.child = undefined;
 
+            if (isRawCopySafe(array_info.child)) {
+                const byte_len = array_info.len * @sizeOf(array_info.child);
+                if (in.len < byte_len) {
+                    return DeserializeError.InputTooSmall;
+                }
+                const child_is_bool = comptime switch (@typeInfo(array_info.child)) {
+                    .bool => true,
+                    else => false,
+                };
+                if (child_is_bool) {
+                    try validateBoolBytes(in[0..byte_len]);
+                }
+                if (byte_len != 0) {
+                    const dest_bytes = std.mem.asBytes(&val);
+                    @memcpy(dest_bytes[0..byte_len], in[0..byte_len]);
+                }
+                return .{ .input = in[byte_len..], .val = val };
+            }
+
             for (0..val.len) |i| {
                 const out = try deserialize_impl(
                     array_info.child,
@@ -323,15 +384,17 @@ fn deserialize_impl(
                     in = len_out.input;
                     const length = len_out.val;
 
+                    const len_usize = @as(usize, @intCast(length));
+
                     if (ptr_info.sentinel()) |sentinel| {
                         const out = try allocator.allocSentinel(
                             ptr_info.child,
-                            length,
+                            len_usize,
                             sentinel,
                         );
                         errdefer allocator.free(out);
 
-                        for (0..length) |i| {
+                        for (0..len_usize) |i| {
                             const elem_out = try deserialize_impl(
                                 ptr_info.child,
                                 in,
@@ -349,24 +412,44 @@ fn deserialize_impl(
                         }
 
                         return .{ .input = in, .val = out };
-                    } else {
-                        const out = try allocator.alloc(ptr_info.child, length);
-                        errdefer allocator.free(out);
+                    }
 
-                        for (0..length) |i| {
-                            const elem_out = try deserialize_impl(
-                                ptr_info.child,
-                                in,
-                                allocator,
-                                depth + 1,
-                                max_depth,
-                            );
-                            in = elem_out.input;
-                            out[i] = elem_out.val;
+                    const out = try allocator.alloc(ptr_info.child, len_usize);
+                    errdefer allocator.free(out);
+
+                    if (isRawCopySafe(ptr_info.child)) {
+                        const byte_len = std.math.mul(usize, len_usize, @sizeOf(ptr_info.child)) catch return DeserializeError.InputTooSmall;
+                        if (in.len < byte_len) {
+                            return DeserializeError.InputTooSmall;
                         }
-
+                        const child_is_bool = comptime switch (@typeInfo(ptr_info.child)) {
+                            .bool => true,
+                            else => false,
+                        };
+                        if (child_is_bool) {
+                            try validateBoolBytes(in[0..byte_len]);
+                        }
+                        if (byte_len != 0) {
+                            const dest_bytes = std.mem.sliceAsBytes(out);
+                            @memcpy(dest_bytes[0..byte_len], in[0..byte_len]);
+                        }
+                        in = in[byte_len..];
                         return .{ .input = in, .val = out };
                     }
+
+                    for (0..len_usize) |i| {
+                        const elem_out = try deserialize_impl(
+                            ptr_info.child,
+                            in,
+                            allocator,
+                            depth + 1,
+                            max_depth,
+                        );
+                        in = elem_out.input;
+                        out[i] = elem_out.val;
+                    }
+
+                    return .{ .input = in, .val = out };
                 },
                 .one => {
                     const out = try deserialize_impl(
